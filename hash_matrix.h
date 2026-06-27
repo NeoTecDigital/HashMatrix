@@ -213,16 +213,14 @@ private:
             size_t size;
             bool isDense;
             
-            Block(void* p, size_t s, bool dense) 
+            Block(void* p, size_t s, bool dense)
                 : ptr(p), size(s), isDense(dense) {}
             ~Block() {
-                if (ptr) {
-                    if (isDense) {
-                        delete[] static_cast<T*>(ptr);
-                    } else {
-                        delete static_cast<SparseBlock*>(ptr);
-                    }
-                }
+                // The MemoryPool only TRACKS pointers; it does not own them.
+                // allocate() returns the pointer to the caller, which stores it
+                // in a BlockMetadata that owns + frees it (~BlockMetadata).
+                // Freeing here too was a double-free (triple, with the old
+                // ~hash_matrix loop). Single owner = BlockMetadata. No-op here.
             }
         };
         
@@ -1520,16 +1518,11 @@ public:
     }
 
     ~hash_matrix() {
-        // Clean up all blocks
-        for (auto& [coord, block] : blockIndex) {
-            if (block.dataPtr) {
-                if (block.type == BlockType::SPARSE) {
-                    delete static_cast<SparseBlock*>(block.dataPtr);
-                } else {
-                    delete[] static_cast<T*>(block.dataPtr);
-                }
-            }
-        }
+        // Single-owner cleanup: each BlockMetadata in blockIndex owns its own
+        // dataPtr and frees it in ~BlockMetadata() when the map is destroyed.
+        // This destructor must NOT free block.dataPtr again -- doing so was a
+        // double-free (the map destruction runs ~BlockMetadata on the same
+        // blocks). blockIndex's own destruction handles all block memory.
     }
 
     /**
